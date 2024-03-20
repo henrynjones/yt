@@ -74,6 +74,7 @@ class OpenPMDHierarchy(GridIndex):
         self.dataset = ds
         self.index_filename = ds.parameter_filename
         self.directory = path.dirname(self.index_filename)
+        self.max_level = self.dataset._max_level
         GridIndex.__init__(self, ds, dataset_type)
 
     def _get_particle_type_counts(self):
@@ -87,8 +88,6 @@ class OpenPMDHierarchy(GridIndex):
         """
         result = {}
         f = self.dataset._handle
-        # bp = self.dataset.base_path
-        # pp = self.dataset.particles_path
 
         try:
             for ptype in self.ds.particle_types_raw:
@@ -99,9 +98,7 @@ class OpenPMDHierarchy(GridIndex):
                 part = f.particles[spec]
                 pos = part["position"][list(part["position"])[0]]
                 if is_const_component(pos):
-                    result[ptype] = pos.shape[
-                        0
-                    ]  # relic from old frontend, should there be a difference
+                    result[ptype] = pos.shape[0]  # relic, should there be a difference?
                 else:
                     result[ptype] = pos.shape[0]
         except KeyError:
@@ -206,49 +203,63 @@ class OpenPMDHierarchy(GridIndex):
 
         self.num_grids = 0
 
-        try:
-            for mname in list(f.meshes):
+        try:  # if the pattern in 'B', 'B_lvl1', ..., 'E', 'E_lvl1'
+            for level, mname in enumerate(list(f.meshes)[: self.max_level + 1]):
                 mesh = f.meshes[mname]
                 if isinstance(mesh, openpmd_api.io.openpmd_api_cxx.Mesh):
-                    """#very much a rough draft, first try, problems with io"""
-                    """
+                    # first draft, might not be working
                     if len(mesh[list(mesh)[0]].available_chunks()) == 1:
-                        #the case for hdf5 data
-                        offset  = mesh[list(mesh)[0]].available_chunks()[0].offset
-                        extent  = mesh[list(mesh)[0]].available_chunks()[0].extent
-                        shape = np.array(extent)- np.array(offset)
+                        # the case for hdf5 data
+                        offset = mesh[list(mesh)[0]].available_chunks()[0].offset
+                        extent = mesh[list(mesh)[0]].available_chunks()[0].extent
+                        shape = np.array(extent) - np.array(offset)
                         shape = tuple(shape.tolist())
-                        grids_in_domain = 1
+                        # should we assume that b_y has the same structure as b_x?
+                        chunk_list = mesh[list(mesh)[0]].available_chunks()
+                        print("hdf5")
                     elif len(mesh[list(mesh)[0]].available_chunks()) > 1:
-                        #the case for adios2 data
+                        # the case for adios2 data
                         chunk_one = mesh[list(mesh)[0]].available_chunks()[0]
-                        #get shape of individual to-be-grid/existing-openpmd-chunk
-                        shape_arr = np.array(chunk_one.extent) - np.array(chunk_one.offset)
+                        # get shape of individual to-be-grid/existing-openpmd-chunk
+                        # this won't work long term, we need
+                        shape_arr = np.array(chunk_one.extent) - np.array(
+                            chunk_one.offset
+                        )
                         shape = tuple(shape_arr.tolist())
-                        print('adios shape')
+                        print("adios shape")
                         print(shape)
-                        grids_in_domain = np.array(mesh[list(mesh)[0]].shape)/shape_arr
+                        # grids_in_domain = (
+                        #    np.array(mesh[list(mesh)[0]].shape) / shape_arr
+                        # )
+                        chunk_list = mesh[list(mesh)[0]].available_chunks()
                     else:
-                        #unknown
-                        print('back here')
+                        # unknown
+                        print("back here")
                         shape = tuple(mesh[list(mesh)[0]].shape)
-                        grids_in_domain = 1
-                        """
+                        # grids_in_domain = 1
+                        chunk_list = None
+                    # don't know whats happening
                     shape = tuple(mesh[list(mesh)[0]].shape)
                 else:
                     # shape = tuple(mesh.shape)
                     # don't think we could get here, a relic from old frontend
+                    print("self raising")
                     raise KeyError
+                # currently we make one meshshape key/value dict pair per openpmdapi mesh
                 spacing = tuple(mesh.grid_spacing)
                 offset = tuple(mesh.grid_global_offset)
                 unit_si = mesh.grid_unit_SI
-                self.meshshapes[mname] = (
+                self.meshshapes[level] = (
+                    chunk_list,  # new
                     shape,
                     spacing,
                     offset,
                     unit_si,
+                    # assumptions here about
+                    # compatability between meshes of same level
                 )  # grids_in_domain,
         except (KeyError, TypeError, AttributeError):
+            print("error")
             pass
         try:
             for pname in list(f.particles):
@@ -275,10 +286,14 @@ class OpenPMDHierarchy(GridIndex):
 
         # Meshes of the same size do not need separate chunks
         # we need to make this work with the available_grids() call above
-        for shape, *_ in set(self.meshshapes.values()):
-            self.num_grids += min(
-                shape[0], int(np.ceil(reduce(mul, shape) * self.vpg**-1))
-            )
+        for chunk_ls, *_ in set(self.meshshapes.values()):
+            # self.num_grids += min(
+            #    shape[0], int(np.ceil(reduce(mul, shape) * self.vpg**-1))
+            # ) #we are just using the amount of grids per level,
+            # assuming equality between records of same level
+            print("here")
+            self.num_grids += len(chunk_ls)  # here we are not limiting by memory
+        print(self.num_grids)
 
         # Same goes for particle chunks if they are not inside particlePatches
         patches = {}
@@ -308,7 +323,9 @@ class OpenPMDHierarchy(GridIndex):
         only. The others do not have any particles affiliated with them.
         """
         f = self.dataset._handle
-        self.grid_levels.flat[:] = 0  # this needs to change,
+        self.grid_levels.flat[:] = np.arange(
+            self.max_level + 1
+        )  # this needs to change,
         self.grids = np.empty(self.num_grids, dtype="object")
 
         grid_index_total = 0
@@ -439,7 +456,7 @@ class OpenPMDHierarchy(GridIndex):
         for i in np.arange(self.num_grids):
             self.grids[i]._prepare_grid()
             self.grids[i]._setup_dx()
-        self.max_level = 0
+        # self.max_level = 0
 
 
 class OpenPMDDataset(Dataset):
@@ -588,7 +605,12 @@ class OpenPMDDataset(Dataset):
         self._periodicity = np.zeros(3, dtype="bool")
         self.refine_by = 1
         self.cosmological_simulation = 0
-
+        # hidden as this is traditionally an index variable
+        max_lev = 0
+        for mname in f.meshes:
+            if "lvl" in mname:
+                max_lev = max(max_lev, int(mname.split("lvl")[-1]))
+        self._max_level = max_lev
         try:
             shapes = {}
             left_edges = {}
