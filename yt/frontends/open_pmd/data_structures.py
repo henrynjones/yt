@@ -1,5 +1,3 @@
-from functools import reduce
-from operator import mul
 from os import listdir, path
 from re import match
 from typing import Optional
@@ -203,31 +201,30 @@ class OpenPMDHierarchy(GridIndex):
 
         self.num_grids = 0
 
-        try:  # if the pattern in 'B', 'B_lvl1', ..., 'E', 'E_lvl1'
+        try:  # if the pattern in 'B', 'B_lvl1', ..., 'E', 'E_lvl1' make some assumptions
             for level, mname in enumerate(list(f.meshes)[: self.max_level + 1]):
                 mesh = f.meshes[mname]
                 if isinstance(mesh, openpmd_api.io.openpmd_api_cxx.Mesh):
                     # first draft, might not be working
                     if len(mesh[list(mesh)[0]].available_chunks()) == 1:
                         # the case for hdf5 data
-                        offset = mesh[list(mesh)[0]].available_chunks()[0].offset
-                        extent = mesh[list(mesh)[0]].available_chunks()[0].extent
-                        shape = np.array(extent) - np.array(offset)
-                        shape = tuple(shape.tolist())
+                        # offset = mesh[list(mesh)[0]].available_chunks()[0].offset
+                        # extent = mesh[list(mesh)[0]].available_chunks()[0].extent
+                        # shape = np.array(extent) - np.array(offset)
+                        # shape = tuple(shape.tolist())
                         # should we assume that b_y has the same structure as b_x?
                         chunk_list = mesh[list(mesh)[0]].available_chunks()
                         print("hdf5")
                     elif len(mesh[list(mesh)[0]].available_chunks()) > 1:
                         # the case for adios2 data
-                        chunk_one = mesh[list(mesh)[0]].available_chunks()[0]
+                        # chunk_one = mesh[list(mesh)[0]].available_chunks()[0]
                         # get shape of individual to-be-grid/existing-openpmd-chunk
                         # this won't work long term, we need
-                        shape_arr = np.array(chunk_one.extent) - np.array(
-                            chunk_one.offset
-                        )
-                        shape = tuple(shape_arr.tolist())
-                        print("adios shape")
-                        print(shape)
+                        # shape_arr = np.array(chunk_one.extent) - np.array(
+                        #    chunk_one.offset
+                        # )
+                        # shape = tuple(shape_arr.tolist())
+
                         # grids_in_domain = (
                         #    np.array(mesh[list(mesh)[0]].shape) / shape_arr
                         # )
@@ -251,7 +248,7 @@ class OpenPMDHierarchy(GridIndex):
                 unit_si = mesh.grid_unit_SI
                 self.meshshapes[level] = (
                     chunk_list,  # new
-                    shape,
+                    shape,  # keeping this because I don't know if we need it
                     spacing,
                     offset,
                     unit_si,
@@ -286,16 +283,19 @@ class OpenPMDHierarchy(GridIndex):
 
         # Meshes of the same size do not need separate chunks
         # we need to make this work with the available_grids() call above
-        for chunk_ls, *_ in set(self.meshshapes.values()):
+        for chunk_ls, shape, *_ in self.meshshapes.values():
             # self.num_grids += min(
             #    shape[0], int(np.ceil(reduce(mul, shape) * self.vpg**-1))
             # ) #we are just using the amount of grids per level,
             # assuming equality between records of same level
+            print(shape)
             print("here")
             self.num_grids += len(chunk_ls)  # here we are not limiting by memory
+        print("print num_grids")
         print(self.num_grids)
-
+        print("printshape")
         # Same goes for particle chunks if they are not inside particlePatches
+        # what does this do?
         patches = {}
         no_patches = {}
         for k, v in self.numparts.items():
@@ -323,63 +323,68 @@ class OpenPMDHierarchy(GridIndex):
         only. The others do not have any particles affiliated with them.
         """
         f = self.dataset._handle
-        self.grid_levels.flat[:] = np.arange(
-            self.max_level + 1
-        )  # this needs to change,
+        self.grid_levels.flat[:] = np.arange(self.max_level + 1)
         self.grids = np.empty(self.num_grids, dtype="object")
 
         grid_index_total = 0
 
         # Mesh grids
-        for mesh in set(self.meshshapes.values()):
-            (shape, spacing, offset, unit_si) = mesh
+        for level, mesh in self.meshshapes.items():  # this is only for
+            (chunk_ls, shape, spacing, offset, unit_si) = mesh
             shape = np.asarray(shape)
             spacing = np.asarray(spacing)
             offset = np.asarray(offset)
-            # Total dimension of this grid
+            # Total dimension of this domain on a per-mesh-level basis!
             domain_dimension = np.asarray(shape, dtype=np.int32)
+            # cast to 3D
             domain_dimension = np.append(
                 domain_dimension, np.ones(3 - len(domain_dimension))
             )
-            # Number of grids of this shape
-            num_grids = min(shape[0], int(np.ceil(reduce(mul, shape) * self.vpg**-1)))
-            gle = offset * unit_si  # self.dataset.domain_left_edge
-            gre = (
-                domain_dimension[: spacing.size] * unit_si * spacing + gle
-            )  # self.dataset.domain_right_edge
-            gle = np.append(gle, np.zeros(3 - len(gle)))
-            gre = np.append(gre, np.ones(3 - len(gre)))
-            grid_dim_offset = np.linspace(
-                0, domain_dimension[0], num_grids + 1, dtype=np.int32
-            )
-            grid_edge_offset = (
-                grid_dim_offset * float(domain_dimension[0]) ** -1 * (gre[0] - gle[0])
-                + gle[0]
-            )
-            mesh_names = []
-            for mname, mdata in self.meshshapes.items():
-                if mesh == mdata:
-                    mesh_names.append(str(mname))
-            prev = 0
-            for grid in np.arange(num_grids):
-                self.grid_dimensions[grid_index_total] = domain_dimension
-                self.grid_dimensions[grid_index_total][0] = (
-                    grid_dim_offset[grid + 1] - grid_dim_offset[grid]
+            prev = np.zeros(np.shape(domain_dimension))
+            # num_grids_per_level = len(chunk_ls)
+            for chunk in chunk_ls:  # convert chunks to grids!
+                # dimension of individual chunks/grids
+                chunk_dim = np.append(
+                    np.array(chunk.extent), np.ones(3 - len(chunk.extent))
+                )
+
+                gle = (
+                    np.array(chunk.offset) * unit_si * np.array(spacing) + offset
+                )  # to get to physical units, don't we need spacing?
+                gre = (
+                    np.array(chunk.offset) + np.array(chunk.extent)
+                ) * unit_si * spacing + offset  # * offset is offset in physical units?
+                # cast to 3D
+                gle = np.append(gle, np.zeros(3 - len(gle)))
+                gre = np.append(gre, np.ones(3 - len(gre)))
+
+                # set things up
+                self.grid_dimensions[grid_index_total] = chunk_dim
+                self.grid_particle_count[grid_index_total] = (
+                    0  # does this change for particle patches?
                 )
                 self.grid_left_edge[grid_index_total] = gle
-                self.grid_left_edge[grid_index_total][0] = grid_edge_offset[grid]
                 self.grid_right_edge[grid_index_total] = gre
-                self.grid_right_edge[grid_index_total][0] = grid_edge_offset[grid + 1]
-                self.grid_particle_count[grid_index_total] = 0
+
+                mesh_names = list(f.meshes)[
+                    level :: self.max_level + 1
+                ]  # doing this on a per_level basis
+                # we know what level we are on
+                # this should just be list(f.meshes(0::self.max_level+1) in the future
+                chunk_offset = np.append(
+                    np.array(chunk.offset) + np.array(offset),
+                    np.ones(3 - len(chunk.offset)),
+                )
+
                 self.grids[grid_index_total] = self.grid(
                     grid_index_total,
                     self,
-                    0,
-                    fi=prev,
-                    fo=self.grid_dimensions[grid_index_total][0],
-                    ft=mesh_names,
+                    level,  # now we have levels
+                    fi=prev,  # field index #was prev
+                    fo=chunk_offset,  # + #self.grid_dimensions[grid_index_total][0], #field offset
+                    ft=mesh_names,  # field types
                 )
-                prev += self.grid_dimensions[grid_index_total][0]
+                prev += chunk_offset  # self.grid_dimensions[grid_index_total][0] #dimension of the prvious thing?
                 grid_index_total += 1
 
         handled_ptypes = []
