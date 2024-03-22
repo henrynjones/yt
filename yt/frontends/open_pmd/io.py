@@ -15,8 +15,8 @@ class IOHandlerOpenPMD(BaseIOHandler):  # Used to be hdf5
         self.ds = ds
         self._handle = ds._handle
         self.base_path = ds.base_path
-        self.meshes_path = ds.meshes_path
-        self.particles_path = ds.particles_path
+        # self.meshes_path = ds.meshes_path
+        # self.particles_path = ds.particles_path
         self._array_fields = {}
         self._cached_ptype = ""
 
@@ -197,8 +197,12 @@ class IOHandlerOpenPMD(BaseIOHandler):  # Used to be hdf5
         for ftype, fname in fields:
             field = (ftype, fname)
             for chunk in chunks:
+                print("chunklength")
+                print(len(chunks))
                 for grid in chunk.objs:  # need to figure out grids
+                    print(len(chunk.objs))
                     mask = grid._get_selector_mask(selector)
+                    print(mask.shape)
                     if mask is None:
                         continue
                     component = fname.replace("-", "_")
@@ -207,6 +211,8 @@ class IOHandlerOpenPMD(BaseIOHandler):  # Used to be hdf5
                     else:
                         component_field = "_".join(component.split("_")[:-1])
                         component_axes = component.split("_")[-1]
+                        # axes_index = get_coordinate(ds[component_field], component_axes)
+                        # print(axes_index)
                         data = get_component(
                             ds[component_field],
                             component_axes,

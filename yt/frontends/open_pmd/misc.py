@@ -1,6 +1,7 @@
 import numpy as np
 
 from yt.utilities.logger import ytLogger as mylog
+from yt.utilities.on_demand_imports import _openpmd_api as openpmd_api
 
 
 def parse_unit_dimension(unit_dimension):
@@ -72,6 +73,31 @@ def is_const_component(record_component):
     return "value" in record_component.attributes
 
 
+def get_coordinate(mesh, record_axis):
+    """This helper function maps coordinate string to openpmd_api  indeices
+
+    Parameters
+    ----------
+    mesh: openpmd_api.openpmd_api_cxx.Mesh
+    record_axis: a string which specifies which desired axis
+
+    Returns
+    -------
+    int
+        specifying index of axis
+    """
+    if isinstance(mesh, openpmd_api.io.openpmd_api_cxx.Mesh):
+        if "cartesian" in str(mesh.geometry):
+            cart_map = {"x": 0, "y": 1, "z": 2}
+            return cart_map[record_axis]
+        elif "cylindrical" in str(mesh.geometry):
+            raise AttributeError
+        elif "spherical" in str(mesh.geometry):
+            raise AttributeError
+        elif "thetaMode" in str(mesh.geometry):
+            raise AttributeError
+
+
 def get_component(record, record_axis, index=0, offset=None):
     """Grabs a dataset component from a group as a whole or sliced.
 
@@ -110,9 +136,24 @@ def get_component(record, record_axis, index=0, offset=None):
     else:
         if offset is not None:
             offset += index
-            registered = record_component[index : index + offset]
+            print(index, offset)
+            if (
+                len(index) == 3
+            ):  # mismatch between wehat we have created vs what is on disk
+                registered = record_component[
+                    index[0] : offset[0], index[1] : offset[1]
+                ]
+                # index[2] : index[2] + offset[2]]
+            elif len(index) == 2:
+                registered = record_component[
+                    index[0] : offset[0], index[1] : offset[1]
+                ]
+            elif len(index) == 1:
+                registered = record_component[index[0] : offset[0]]
         else:
             # when we don't slice we have to .load_chunk()
             registered = record_component.load_chunk()
+        # need to figure out a way to register everything and then flush at once
         record_component.series_flush()
+        print(np.shape(record_component))
         return np.multiply(registered, unit_si)
