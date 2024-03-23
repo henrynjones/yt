@@ -98,8 +98,8 @@ def get_coordinate(mesh, record_axis):
             raise AttributeError
 
 
-def get_component(record, record_axis, index=0, offset=None):
-    """Grabs a dataset component from a group as a whole or sliced.
+def get_component(record, record_axis, index=0, extent=None):
+    """Grabs a Record Component from a Record as a whole or sliced.
 
     Parameters
     ----------
@@ -108,9 +108,11 @@ def get_component(record, record_axis, index=0, offset=None):
         the openpmd_api_cxx.Record_Component string key, not necessarily a physical axis
     index : int, optional
         first entry along the first axis to read
-    offset : int, optional
+    extent : int, optional
         number of entries to read
-        if not supplied, every entry after index is returned
+        note that the previous frontend named this variable offset,
+        which we thinks adds some confusion.
+        If not supplied, every entry after index is returned.
 
     Notes
     -----
@@ -126,34 +128,30 @@ def get_component(record, record_axis, index=0, offset=None):
     unit_si = record_component.get_attribute("unitSI")
     if is_const_component(record_component):
         shape = np.asarray(record_component.get_attribute("shape"))
-        if offset is None:
+        if extent is None:
             shape[0] -= index
         else:
-            shape = offset
+            shape = extent
         # component is constant, craft an array by hand
         registered = record_component.get_attribute("value")
         return np.full(shape, registered * unit_si)
     else:
-        if offset is not None:
-            offset += index
-            print(index, offset)
-            if (
-                len(index) == 3
-            ):  # mismatch between wehat we have created vs what is on disk
+        if extent is not None:
+            extent += index
+            # len(record_component.shape) gives us on-disk dimensions of component
+            if len(record_component.shape) == 3:
                 registered = record_component[
-                    index[0] : offset[0], index[1] : offset[1]
+                    index[0] : extent[0], index[1] : extent[1], index[2] : extent[2]
                 ]
-                # index[2] : index[2] + offset[2]]
-            elif len(index) == 2:
+            elif len(record_component.shape) == 2:
                 registered = record_component[
-                    index[0] : offset[0], index[1] : offset[1]
+                    index[0] : extent[0], index[1] : extent[1]
                 ]
-            elif len(index) == 1:
-                registered = record_component[index[0] : offset[0]]
+            elif len(record_component.shape) == 1:
+                registered = record_component[index[0] : extent[0]]
         else:
             # when we don't slice we have to .load_chunk()
             registered = record_component.load_chunk()
         # need to figure out a way to register everything and then flush at once
         record_component.series_flush()
-        print(np.shape(record_component))
         return np.multiply(registered, unit_si)

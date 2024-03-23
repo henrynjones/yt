@@ -7,7 +7,7 @@ from yt.geometry.selection_routines import GridSelector
 from yt.utilities.io_handler import BaseIOHandler
 
 
-class IOHandlerOpenPMD(BaseIOHandler):  # Used to be hdf5
+class IOHandlerOpenPMD(BaseIOHandler):
     _field_dtype = "float32"
     _dataset_type = "openPMD"
 
@@ -172,24 +172,21 @@ class IOHandlerOpenPMD(BaseIOHandler):  # Used to be hdf5
         dict
             keys are tuples (ftype, fname) representing a field
             values are flat (``size``,) ndarrays with data from that field
-
-        PROGRESS note: This is not working, as we have to access openpmd chunks from individual record components
-        and make yt and openpmd agree that yt grids == openpmd_api chunks. Due to recent changes in
-        data_structure.OpenPMDHiercarchy.count_grids the slicing here is incorrect
-
         """
+
         f = self._handle
         ds = f.meshes
         chunks = list(chunks)
-        rv = {}
-        ind = {}
-
+        rv = {}  # flat fluid array
+        ind = {}  # flat indices?
+        # this makes me think there will be problems
         if isinstance(selector, GridSelector):
-            if not (len(chunks) == len(chunks[0].objs) == 1):
+            if not (len(chunks) == len(chunks[1].objs) == 1):
                 raise RuntimeError
+        # print(size, 'presize')
         if size is None:
             size = sum(g.count(selector) for chunk in chunks for g in chunk.objs)
-
+        # print(size)
         for field in fields:
             rv[field] = np.empty(size, dtype=np.float64)
             ind[field] = 0
@@ -197,17 +194,28 @@ class IOHandlerOpenPMD(BaseIOHandler):  # Used to be hdf5
         for ftype, fname in fields:
             field = (ftype, fname)
             for chunk in chunks:
-                print("chunklength")
-                print(len(chunks))
-                for grid in chunk.objs:  # need to figure out grids
-                    print(len(chunk.objs))
+                # print('top', fname)
+                # print(len(chunks))
+                for grid in chunk.objs:  # grids per level
+                    # print(len(chunk.objs))
                     mask = grid._get_selector_mask(selector)
-                    print(mask.shape)
+                    # print(mask.shape) #the 3d shape
                     if mask is None:
                         continue
-                    component = fname.replace("-", "_")
-                    if "_".join(component.split("_")[:-1]) not in grid.ftypes:
+                    if grid.Level > 0:  # we hide grid levels from user
+                        component = (
+                            fname.split("_")[0]
+                            + f"_lvl{str(grid.Level)}_"
+                            + fname.split("_")[-1]
+                        )
+                    else:
+                        component = fname
+                    component = component.replace("-", "_")
+                    if "_".join(fname.split("_")[:-1]) not in grid.ftypes:
+                        # we get here due to our last grid holding just particles
                         data = np.full(grid.ActiveDimensions, 0, dtype=np.float64)
+                        # print('not here')
+                        # print(fname, grid.ftypes)
                     else:
                         component_field = "_".join(component.split("_")[:-1])
                         component_axes = component.split("_")[-1]
@@ -224,10 +232,12 @@ class IOHandlerOpenPMD(BaseIOHandler):  # Used to be hdf5
                         mask.shape
                     )  # Workaround - casts a 2D (x,y) array to 3D (x,y,1)
                     count = grid.count(selector)
+                    print("count", count)
                     rv[field][ind[field] : ind[field] + count] = data[mask]
-                    ind[field] += count
+                    ind[field] += count  # flattened index
+        # it would be sweet to flush here
+        # how could we do this without looping?
         for field in fields:
             rv[field] = rv[field][: ind[field]]
             rv[field].flatten()
-
         return rv
