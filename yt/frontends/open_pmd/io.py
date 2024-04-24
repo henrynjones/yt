@@ -137,8 +137,8 @@ class IOHandlerOpenPMD(BaseIOHandler):
                             data = get_component(
                                 pds[component],
                                 list(pds[component])[0],
-                                grid.pindex,
-                                grid.poffset,
+                                grid.pindex.copy(),
+                                grid.poffset.copy(),
                             )[mask]
                         for request_field in rfm[ptype, field]:
                             rv[request_field][
@@ -193,13 +193,9 @@ class IOHandlerOpenPMD(BaseIOHandler):
 
         for ftype, fname in fields:
             field = (ftype, fname)
-            for chunk in chunks:
-                # print('top', fname)
-                # print(len(chunks))
+            for chunk in chunks:  # one chunk per level?
                 for grid in chunk.objs:  # grids per level
-                    # print(len(chunk.objs))
                     mask = grid._get_selector_mask(selector)
-                    # print(mask.shape) #the 3d shape
                     if mask is None:
                         continue
                     if grid.Level > 0:  # we hide grid levels from user
@@ -214,18 +210,14 @@ class IOHandlerOpenPMD(BaseIOHandler):
                     if "_".join(fname.split("_")[:-1]) not in grid.ftypes:
                         # we get here due to our last grid holding just particles
                         data = np.full(grid.ActiveDimensions, 0, dtype=np.float64)
-                        # print('not here')
-                        # print(fname, grid.ftypes)
                     else:
                         component_field = "_".join(component.split("_")[:-1])
                         component_axes = component.split("_")[-1]
-                        # axes_index = get_coordinate(ds[component_field], component_axes)
-                        # print(axes_index)
                         data = get_component(
                             ds[component_field],
                             component_axes,
-                            grid.findex,
-                            grid.foffset,
+                            grid.findex.copy(),
+                            grid.foffset.copy(),
                         )
                     # The following is a modified AMRGridPatch.select(...)
                     data.shape = (

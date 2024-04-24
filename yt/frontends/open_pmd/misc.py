@@ -74,7 +74,8 @@ def is_const_component(record_component):
 
 
 def get_coordinate(mesh, record_axis):
-    """This helper function maps coordinate string to openpmd_api  indeices
+    """This helper function maps coordinate string to openpmd_api  indices
+        This has no use yet but I was hoping to be able to make cylindrical data
 
     Parameters
     ----------
@@ -152,6 +153,5 @@ def get_component(record, record_axis, index=0, extent=None):
         else:
             # when we don't slice we have to .load_chunk()
             registered = record_component.load_chunk()
-        # need to figure out a way to register everything and then flush at once
         record_component.series_flush()
         return np.multiply(registered, unit_si)

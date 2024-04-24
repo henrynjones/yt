@@ -221,7 +221,7 @@ class OpenPMDHierarchy(GridIndex):
                 offset = tuple(mesh.grid_global_offset)
                 unit_si = mesh.grid_unit_SI
                 self.meshshapes[level] = (
-                    chunk_list,  # new
+                    chunk_list,
                     shape,
                     spacing,
                     offset,
@@ -306,7 +306,6 @@ class OpenPMDHierarchy(GridIndex):
             domain_dimension = np.append(
                 domain_dimension, np.ones(3 - len(domain_dimension))
             )
-            prev = np.zeros(np.shape(domain_dimension))
             # num_grids_per_level = len(chunk_ls)
             for chunk in chunk_ls:  # convert chunks to grids!
                 # dimension of individual chunks/grids
@@ -320,7 +319,7 @@ class OpenPMDHierarchy(GridIndex):
                 )  # to get to physical units, don't we need spacing?
                 gre = (
                     np.array(chunk.offset) + np.array(chunk.extent)
-                ) * unit_si * spacing + offset  # * offset is offset in physical units?
+                ) * unit_si * spacing + offset
                 # cast to 3D
                 gle = np.append(gle, np.zeros(3 - len(gle)))
                 gre = np.append(gre, np.ones(3 - len(gre)))
@@ -346,12 +345,11 @@ class OpenPMDHierarchy(GridIndex):
                 self.grids[grid_index_total] = self.grid(
                     grid_index_total,
                     self,
-                    level,  # now we have levels
-                    fi=chunk_offset,  # field index #was prev
-                    fo=chunk_dim,  # + #self.grid_dimensions[grid_index_total][0], #field offset
+                    level,
+                    fi=chunk_offset,  # field index
+                    fo=chunk_dim,  # field offset
                     ft=mesh_names,  # field types
                 )
-                prev += chunk_offset  # self.grid_dimensions[grid_index_total][0] #dimension of the prvious thing?
                 grid_index_total += 1
 
         handled_ptypes = []
