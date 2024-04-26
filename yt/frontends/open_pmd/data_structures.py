@@ -347,7 +347,7 @@ class OpenPMDHierarchy(GridIndex):
                     self,
                     level,
                     fi=chunk_offset,  # field index
-                    fo=chunk_dim,  # field offset
+                    fo=chunk_dim,  # field offset/extent
                     ft=mesh_names,  # field types
                 )
                 grid_index_total += 1
@@ -399,6 +399,7 @@ class OpenPMDHierarchy(GridIndex):
                         handled_ptypes.append(str(pname))
             else:
                 # A grid with this exact particle count has already been created
+                print("here")
                 continue
             for grid in np.arange(num_grids):
                 self.grid_dimensions[grid_index_total] = domain_dimension
@@ -597,6 +598,15 @@ class OpenPMDDataset(Dataset):
                 offset = np.asarray(mesh.grid_global_offset)
                 unit_si = np.asarray(mesh.grid_unit_SI)
                 le = offset * unit_si
+                print(offset, unit_si)
+                print(
+                    "shapes",
+                    np.shape(le),
+                    np.shape(shape),
+                    np.shape(unit_si),
+                    np.shape(spacing),
+                )
+                # if np.shape(le) == np.shape(shape * unit_si * spacing):
                 re = le + shape * unit_si * spacing
                 shapes[mname] = shape
                 left_edges[mname] = le

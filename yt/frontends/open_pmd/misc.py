@@ -149,7 +149,8 @@ def get_component(record, record_axis, index=0, extent=None):
                     index[0] : extent[0], index[1] : extent[1]
                 ]
             elif len(record_component.shape) == 1:
-                registered = record_component[index[0] : extent[0]]
+                # either a scalar or 1d record component
+                registered = record_component[index:extent]
         else:
             # when we don't slice we have to .load_chunk()
             registered = record_component.load_chunk()

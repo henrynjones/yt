@@ -224,7 +224,6 @@ class IOHandlerOpenPMD(BaseIOHandler):
                         mask.shape
                     )  # Workaround - casts a 2D (x,y) array to 3D (x,y,1)
                     count = grid.count(selector)
-                    print("count", count)
                     rv[field][ind[field] : ind[field] + count] = data[mask]
                     ind[field] += count  # flattened index
         # it would be sweet to flush here
