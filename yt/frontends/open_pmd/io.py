@@ -7,7 +7,7 @@ from yt.geometry.selection_routines import GridSelector
 from yt.utilities.io_handler import BaseIOHandler
 
 
-class IOHandlerOpenPMD(BaseIOHandler):
+class IOHandlerOpenPMDHDF5(BaseIOHandler):
     _field_dtype = "float32"
     _dataset_type = "openPMD"
 
@@ -15,8 +15,8 @@ class IOHandlerOpenPMD(BaseIOHandler):
         self.ds = ds
         self._handle = ds._handle
         self.base_path = ds.base_path
-        # self.meshes_path = ds.meshes_path
-        # self.particles_path = ds.particles_path
+        self.meshes_path = ds.meshes_path
+        self.particles_path = ds.particles_path
         self._array_fields = {}
         self._cached_ptype = ""
 
@@ -32,22 +32,20 @@ class IOHandlerOpenPMD(BaseIOHandler):
         """
         if str((ptype, index, offset)) not in self._cached_ptype:
             self._cached_ptype = str((ptype, index, offset))
-            pds = self._handle.particles[ptype]
-            axes = list(pds["position"])
+            pds = self._handle[self.base_path + self.particles_path + "/" + ptype]
+            axes = list(pds["position"].keys())
             if offset is None:
-                # relic from old frontend, does it cause bugs?
-                # should they be the same?
-                if is_const_component(pds["position"][axes[0]]):
-                    offset = pds["position"][axes[0]].shape
+                if is_const_component(pds["position/" + axes[0]]):
+                    offset = pds["position/" + axes[0]].attrs["shape"]
                 else:
-                    offset = pds["position"][axes[0]].shape
+                    offset = pds["position/" + axes[0]].len()
             self.cache = np.empty((3, offset), dtype=np.float64)
             for i in np.arange(3):
                 ax = "xyz"[i]
                 if ax in axes:
                     np.add(
-                        get_component(pds["position"], ax, index, offset),
-                        get_component(pds["positionOffset"], ax, index, offset),
+                        get_component(pds, "position/" + ax, index, offset),
+                        get_component(pds, "positionOffset/" + ax, index, offset),
                         self.cache[i],
                     )
                 else:
@@ -77,9 +75,9 @@ class IOHandlerOpenPMD(BaseIOHandler):
             values are (N,) ndarrays with data from that field
         """
         f = self._handle
-        # bp = self.base_path
-        # pp = self.particles_path
-        ds = f.particles
+        bp = self.base_path
+        pp = self.particles_path
+        ds = f[bp + pp]
         unions = self.ds.particle_unions
         chunks = list(chunks)  # chunks is a generator
 
@@ -110,7 +108,7 @@ class IOHandlerOpenPMD(BaseIOHandler):
             for chunk in chunks:
                 for grid in chunk.objs:
                     if str(ptype) == "io":
-                        species = list(ds)[0]
+                        species = list(ds.keys())[0]
                     else:
                         species = ptype
                     if species not in grid.ptypes:
@@ -124,22 +122,12 @@ class IOHandlerOpenPMD(BaseIOHandler):
                         continue
                     pds = ds[species]
                     for field in ptf[ptype]:
-                        # just chop off 'particle',
-                        record = field.split("_")[1:]
-                        component = record[-1]
-                        if len(record) > 1:  # specifying axes here
-                            record = record[-2].replace("positionCoarse", "position")
-                            component = component.replace("-", "_")
-                            data = get_component(
-                                pds[record], component, grid.pindex, grid.poffset
-                            )[mask]
-                        else:  # just particle_mass, charge, weighting,and id
-                            data = get_component(
-                                pds[component],
-                                list(pds[component])[0],
-                                grid.pindex,
-                                grid.poffset,
-                            )[mask]
+                        component = "/".join(field.split("_")[1:])
+                        component = component.replace("positionCoarse", "position")
+                        component = component.replace("-", "_")
+                        data = get_component(pds, component, grid.pindex, grid.poffset)[
+                            mask
+                        ]
                         for request_field in rfm[ptype, field]:
                             rv[request_field][
                                 ind[request_field] : ind[request_field] + data.shape[0]
@@ -173,20 +161,21 @@ class IOHandlerOpenPMD(BaseIOHandler):
             keys are tuples (ftype, fname) representing a field
             values are flat (``size``,) ndarrays with data from that field
         """
-
         f = self._handle
-        ds = f.meshes
+        bp = self.base_path
+        mp = self.meshes_path
+        ds = f[bp + mp]
         chunks = list(chunks)
-        rv = {}  # flat fluid array
-        ind = {}  # flat indices?
-        # this makes me think there will be problems
+
+        rv = {}
+        ind = {}
+
         if isinstance(selector, GridSelector):
-            if not (len(chunks) == len(chunks[1].objs) == 1):
+            if not (len(chunks) == len(chunks[0].objs) == 1):
                 raise RuntimeError
-        # print(size, 'presize')
+
         if size is None:
             size = sum(g.count(selector) for chunk in chunks for g in chunk.objs)
-        # print(size)
         for field in fields:
             rv[field] = np.empty(size, dtype=np.float64)
             ind[field] = 0
@@ -194,50 +183,25 @@ class IOHandlerOpenPMD(BaseIOHandler):
         for ftype, fname in fields:
             field = (ftype, fname)
             for chunk in chunks:
-                # print('top', fname)
-                # print(len(chunks))
-                for grid in chunk.objs:  # grids per level
-                    # print(len(chunk.objs))
+                for grid in chunk.objs:
                     mask = grid._get_selector_mask(selector)
-                    # print(mask.shape) #the 3d shape
                     if mask is None:
                         continue
-                    if grid.Level > 0:  # we hide grid levels from user
-                        component = (
-                            fname.split("_")[0]
-                            + f"_lvl{str(grid.Level)}_"
-                            + fname.split("_")[-1]
-                        )
-                    else:
-                        component = fname
-                    component = component.replace("-", "_")
-                    if "_".join(fname.split("_")[:-1]) not in grid.ftypes:
-                        # we get here due to our last grid holding just particles
+                    component = fname.replace("_", "/").replace("-", "_")
+                    if component.split("/")[0] not in grid.ftypes:
                         data = np.full(grid.ActiveDimensions, 0, dtype=np.float64)
-                        # print('not here')
-                        # print(fname, grid.ftypes)
                     else:
-                        component_field = "_".join(component.split("_")[:-1])
-                        component_axes = component.split("_")[-1]
-                        # axes_index = get_coordinate(ds[component_field], component_axes)
-                        # print(axes_index)
-                        data = get_component(
-                            ds[component_field],
-                            component_axes,
-                            grid.findex,
-                            grid.foffset,
-                        )
+                        data = get_component(ds, component, grid.findex, grid.foffset)
                     # The following is a modified AMRGridPatch.select(...)
                     data.shape = (
                         mask.shape
                     )  # Workaround - casts a 2D (x,y) array to 3D (x,y,1)
                     count = grid.count(selector)
-                    print("count", count)
                     rv[field][ind[field] : ind[field] + count] = data[mask]
-                    ind[field] += count  # flattened index
-        # it would be sweet to flush here
-        # how could we do this without looping?
+                    ind[field] += count
+
         for field in fields:
             rv[field] = rv[field][: ind[field]]
             rv[field].flatten()
+
         return rv

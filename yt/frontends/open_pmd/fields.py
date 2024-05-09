@@ -5,6 +5,7 @@ from yt.fields.magnetic_field import setup_magnetic_field_aliases
 from yt.frontends.open_pmd.misc import is_const_component, parse_unit_dimension
 from yt.units.yt_array import YTQuantity
 from yt.utilities.logger import ytLogger as mylog
+from yt.utilities.on_demand_imports import _h5py as h5py
 from yt.utilities.physical_constants import mu_0, speed_of_light
 
 
@@ -140,22 +141,20 @@ class OpenPMDFieldInfo(FieldInfoContainer):
 
     def __init__(self, ds, field_list):
         f = ds._handle
-        # bp = ds.base_path
-        # mp = ds.meshes_path
-        # pp = ds.particles_path
+        bp = ds.base_path
+        mp = ds.meshes_path
+        pp = ds.particles_path
 
         try:
-            fields = f.meshes
-            for fname in list(fields):
+            fields = f[bp + mp]
+            for fname in fields.keys():
                 field = fields[fname]
-                if len(list(field)) == 1 or is_const_component(field):
+                if isinstance(field, h5py.Dataset) or is_const_component(field):
                     # Don't consider axes.
                     # This appears to be a vector field of single dimensionality
-                    ytname = str(
-                        "_".join([fname.replace("_", "-")])
-                    )  # doesn't do anything for us
+                    ytname = str("_".join([fname.replace("_", "-")]))
                     parsed = parse_unit_dimension(
-                        np.asarray(field.unit_dimension, dtype="int64")
+                        np.asarray(field.attrs["unitDimension"], dtype="int64")
                     )
                     unit = str(YTQuantity(1, parsed).units)
                     aliases = []
@@ -165,10 +164,10 @@ class OpenPMDFieldInfo(FieldInfoContainer):
                         self._mag_fields.append(ytname)
                     self.known_other_fields += ((ytname, (unit, aliases, None)),)
                 else:
-                    for axis in list(field):
+                    for axis in field.keys():
                         ytname = str("_".join([fname.replace("_", "-"), axis]))
                         parsed = parse_unit_dimension(
-                            np.asarray(field.unit_dimension, dtype="int64")
+                            np.asarray(field.attrs["unitDimension"], dtype="int64")
                         )
                         unit = str(YTQuantity(1, parsed).units)
                         aliases = []
@@ -183,28 +182,29 @@ class OpenPMDFieldInfo(FieldInfoContainer):
             pass
 
         try:
-            particles = f.particles
-            for pname in list(particles):
+            particles = f[bp + pp]
+            for pname in particles.keys():
                 species = particles[pname]
-                for recname in list(species):
+                for recname in species.keys():
                     try:
                         record = species[recname]
-                        parsed = parse_unit_dimension(record.unit_dimension)
+                        parsed = parse_unit_dimension(record.attrs["unitDimension"])
                         unit = str(YTQuantity(1, parsed).units)
-
                         ytattrib = str(recname).replace("_", "-")
                         if ytattrib == "position":
                             # Symbolically rename position to preserve yt's
                             # interpretation of the pfield particle_position is later
                             # derived in setup_absolute_positions in the way yt expects
                             ytattrib = "positionCoarse"
-                        if len(list(record)) == 1 or is_const_component(record):
+                        if isinstance(record, h5py.Dataset) or is_const_component(
+                            record
+                        ):
                             name = ["particle", ytattrib]
                             self.known_particle_fields += (
                                 (str("_".join(name)), (unit, [], None)),
                             )
                         else:
-                            for axis in list(record):  # what happens
+                            for axis in record.keys():
                                 aliases = []
                                 name = ["particle", ytattrib, axis]
                                 ytname = str("_".join(name))
